@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  // Swap to "postgresql" + a real DATABASE_URL when you're ready to deploy.
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String       @id @default(cuid())
+  githubId     Int          @unique
+  username     String
+  avatarUrl    String?
+  accessToken  String
+  publicSlug   String?      @unique
+  isPublic     Boolean      @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  folders      Folder[]
+  repositories Repository[]
+}
+
+model Folder {
+  id           String       @id @default(cuid())
+  name         String
+  parentId     String?
+  parent       Folder?      @relation("FolderTree", fields: [parentId], references: [id])
+  children     Folder[]     @relation("FolderTree")
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  repositories Repository[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Repository {
+  id              String    @id @default(cuid())
+  githubRepoId    Int
+  name            String
+  fullName        String
+  htmlUrl         String
+  description     String?
+  language        String?
+  topics          String    @default("") // comma-separated — sqlite has no native array type
+  stars           Int       @default(0)
+  private         Boolean   @default(false)
+  status          String    @default("active") // active | missing
+
+  // Health-dashboard fields
+  pushedAt        DateTime?
+  hasLicense      Boolean   @default(false)
+  openIssuesCount Int       @default(0)
+  hasReadme       Boolean?  // null = not checked yet
+  readmeCheckedAt DateTime?
+
+  folderId        String?
+  folder          Folder?   @relation(fields: [folderId], references: [id])
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+  lastSyncedAt    DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([userId, githubRepoId])
+}
