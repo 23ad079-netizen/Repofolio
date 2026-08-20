@@ -2,6 +2,14 @@
 // In development, we use VITE_API_URL or default to local backend port 4000.
 const API_URL = import.meta.env.PROD ? "" : (import.meta.env.VITE_API_URL || "http://localhost:4000");
 
+// The OAuth login flow involves browser redirects (302s) and must NOT go
+// through the Vercel proxy — it must hit Render directly so the browser
+// follows the redirect chain. The callback comes BACK through the Vercel
+// proxy so the cookie lands on the Vercel domain.
+const DIRECT_BACKEND_URL = import.meta.env.PROD
+  ? "https://repofolio.onrender.com"
+  : (import.meta.env.VITE_API_URL || "http://localhost:4000");
+
 export interface Folder {
   id: string;
   name: string;
@@ -37,7 +45,7 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export const api = {
-  loginUrl: () => `${API_URL}/auth/github`,
+  loginUrl: () => `${DIRECT_BACKEND_URL}/auth/github`,
   me: () => request("/auth/me"),
   logout: () => request("/auth/logout", { method: "POST" }),
 

@@ -5,16 +5,13 @@ import { signSession, requireAuth, type AuthedRequest } from "../middleware/auth
 
 const router = Router();
 
-// In production, frontend and backend live on different domains (e.g.
-// vercel.app + onrender.com), so the cookie needs SameSite=None + Secure to
-// be sent cross-site at all. Locally, frontend/backend share localhost and
-// there's no HTTPS, so it needs the opposite (Lax, not Secure) or the
-// browser drops it entirely.
-const isProd = process.env.NODE_ENV === "production";
+// With the Vercel proxy in production, the callback comes through the same
+// domain (vercel.app), so the cookie is always first-party. SameSite=Lax
+// works everywhere — no need for the fragile SameSite=None + Secure combo.
 const sessionCookieOptions = {
   httpOnly: true,
-  sameSite: (isProd ? "none" : "lax") as "none" | "lax",
-  secure: isProd,
+  sameSite: "lax" as const,
+  secure: process.env.NODE_ENV === "production",
   maxAge: 30 * 24 * 60 * 60 * 1000,
 };
 
