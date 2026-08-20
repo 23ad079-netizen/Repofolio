@@ -3,6 +3,7 @@ import { prisma } from "../db.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 import { fetchReadmeText, fetchRootFileNames } from "../lib/github.js";
 import { categorizeRepositoriesWithAI, isAiConfigured, type AiRepoInput } from "../lib/llm.js";
+import { suggestCategory } from "../lib/categorize.js";
 
 const router = Router();
 router.use(requireAuth);
@@ -84,15 +85,42 @@ router.post("/suggestions", async (req: AuthedRequest, res) => {
         .map((idx) => ({ repoId: repos[idx].id, repoName: repos[idx].name })),
     }));
 
-    // Safety net: the model is instructed to place every repo somewhere, but
-    // it doesn't always comply. Anything it left out is surfaced explicitly
-    // rather than silently vanishing — it just stays Uncategorized.
+    // Fallback: any repos the AI model missed get categorized by the
+    // keyword-based engine instead. This guarantees every repo lands in a
+    // folder — the AI handles the nuanced ones, keywords catch the rest.
     const assignedIds = new Set(folders.flatMap((f) => f.repos.map((r) => r.repoId)));
-    const unassigned = repos
-      .filter((r: (typeof repos)[number]) => !assignedIds.has(r.id))
-      .map((r: (typeof repos)[number]) => ({ repoId: r.id, repoName: r.name }));
+    const stillUnassigned: { repoId: string; repoName: string }[] = [];
 
-    res.json({ folders, unassigned, processed: repos.length });
+    for (const r of repos) {
+      if (assignedIds.has(r.id)) continue;
+
+      const keywordResult = suggestCategory({
+        name: r.name,
+        description: r.description,
+        language: r.language,
+        topics: r.topics,
+      });
+
+      if (keywordResult) {
+        // Find or create the folder in our results
+        const existingFolder = folders.find(
+          (f) => f.folderName.toLowerCase() === keywordResult.label.toLowerCase()
+        );
+        if (existingFolder) {
+          existingFolder.repos.push({ repoId: r.id, repoName: r.name });
+        } else {
+          folders.push({
+            folderName: keywordResult.label,
+            repos: [{ repoId: r.id, repoName: r.name }],
+          });
+        }
+      } else {
+        // Even keywords couldn't match — truly unassigned
+        stillUnassigned.push({ repoId: r.id, repoName: r.name });
+      }
+    }
+
+    res.json({ folders, unassigned: stillUnassigned, processed: repos.length });
   } catch (err) {
     console.error("AI categorization failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "AI categorization failed" });
@@ -100,3 +128,4 @@ router.post("/suggestions", async (req: AuthedRequest, res) => {
 });
 
 export default router;
+

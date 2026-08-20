@@ -5,11 +5,13 @@ file explorer. Nothing on GitHub itself is ever touched: your repos stay exactly
 where they are, and this app just keeps a private "which folder is this repo in"
 map in its own database.
 
+### 🔗 [Try it live → repofolio-sigma.vercel.app](https://repofolio-sigma.vercel.app)
+
 ```
 Browser (React)  <-->  Backend (Express)  <-->  GitHub API
                              |
                              v
-                        SQLite / Postgres
+                         Postgres (Neon)
                      (folders, repos, users)
 ```
 
@@ -54,10 +56,8 @@ Open `.env` and fill in the two values from Step 1:
 GITHUB_CLIENT_ID=your_client_id_here
 GITHUB_CLIENT_SECRET=your_client_secret_here
 JWT_SECRET=any_long_random_string_you_make_up
+DATABASE_URL=postgresql://user:password@host/dbname
 ```
-
-Leave the rest of `.env` as-is for local testing (it already points at a local
-SQLite file — no Postgres install needed to try this out).
 
 Create the database and start the API:
 
@@ -115,7 +115,7 @@ running too.
     the full folder path for each match.
 12. **Refresh the page** (`F5`) — confirm you're still logged in and your
     folder structure is still there. This is the real persistence check: it's
-    coming from SQLite now, not from memory like the earlier prototype.
+    coming from the database now, not from memory.
 13. **Log out** (bottom-left), then go to GitHub → **Settings → Applications →
     Authorized OAuth Apps** and confirm "Repofolio (local)" is listed
     there — that's GitHub's own record that access was actually granted, not
@@ -220,23 +220,3 @@ These build on everything above — make sure you've already synced some repos
 - If a repo is deleted on GitHub, the next sync marks it "missing" here rather
   than silently deleting your organizational record of it — you choose when to
   remove it from the Explorer.
-
-## Moving to Postgres later
-
-For anything beyond local testing, swap SQLite for Postgres:
-
-1. In `backend/prisma/schema.prisma`, change `provider = "sqlite"` to
-   `provider = "postgresql"`.
-2. Set `DATABASE_URL` in `.env` to a real Postgres connection string.
-3. Run `npx prisma migrate dev` again.
-
-Everything else (routes, frontend) stays the same.
-
-## What's next (not built yet)
-
-- Chrome extension showing folder location on `github.com/user/repo` pages
-- Tags and favorites (separate from folder structure)
-- Embedding-based categorization (the heuristic keyword version is in
-  `backend/src/lib/categorize.ts` — swapping in a real embedding model later
-  means changing that one file, not any of the routes or UI that call it)
-- Desktop app (Tauri) sharing this same backend
