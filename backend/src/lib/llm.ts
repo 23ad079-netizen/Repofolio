@@ -80,23 +80,27 @@ export async function categorizeRepositoriesWithAI(
   if (!GROQ_API_KEY) throw new Error("AI categorization is not configured on this server");
   if (repos.length === 0) return { folders: [] };
 
-  const repoBlocks = repos
-    .map((r) => {
-      const readme = r.readme ? r.readme.slice(0, 900) : "(no README)";
-      const files = r.rootFiles.length ? r.rootFiles.slice(0, 15).join(", ") : "(empty or unknown)";
-      return [
-        `#${r.index}`,
-        `Name: ${r.name}`,
-        `Language: ${r.language || "unknown"}`,
-        `Topics: ${r.topics || "none"}`,
-        `Description: ${r.description || "none"}`,
-        `Root files: ${files}`,
-        `README (truncated):`,
-        readme,
-        "---",
-      ].join("\n");
-    })
-    .join("\n");
+  function buildRepoBlocks(repoList: AiRepoInput[]) {
+    return repoList
+      .map((r) => {
+        const readme = r.readme ? r.readme.slice(0, 900) : "(no README)";
+        const files = r.rootFiles.length ? r.rootFiles.slice(0, 15).join(", ") : "(empty or unknown)";
+        return [
+          `#${r.index}`,
+          `Name: ${r.name}`,
+          `Language: ${r.language || "unknown"}`,
+          `Topics: ${r.topics || "none"}`,
+          `Description: ${r.description || "none"}`,
+          `Root files: ${files}`,
+          `README (truncated):`,
+          readme,
+          "---",
+        ].join("\n");
+      })
+      .join("\n");
+  }
+
+  const repoBlocks = buildRepoBlocks(repos);
 
   const existingFoldersNote =
     existingFolderNames.length > 0
@@ -111,9 +115,10 @@ Your job: group these repositories into a small number of sensible top-level fol
 
 Rules:
 - Folder names must be short, human-readable category labels only — e.g. "AI / ML", "Web Apps", "DSA Practice". Never append a number, index, count, or any digit to a folder name.
-- Every repo index from 0 to ${repos.length - 1} must appear in exactly one folder's repoIndexes array. Before you finish, verify every index in that range appears exactly once across all folders combined — do not invent folder categories and leave them empty, and do not omit any index.
-- Missing READMEs are common and are not a reason to skip a repo. When a repo has no README, base your judgment on its name, language, topics, and root file listing instead (e.g. a "requirements.txt" or "manage.py" suggests Python/backend; a "package.json" suggests JS/web) — always make your best-effort placement rather than leaving a repo unassigned just because README content is thin or missing.
-- A repo that is genuinely unlike the others should get its own folder with just that one repo in it — that is correct and expected. The goal is that ALL ${repos.length} repos are placed somewhere, not that every folder has multiple repos.
+- CRITICAL: Every repo index from 0 to ${repos.length - 1} must appear in exactly one folder's repoIndexes array. You MUST place ALL ${repos.length} repos. Before you finish, count the total number of indexes across all folders — if it is not exactly ${repos.length}, add the missing indexes. Do NOT leave any repo out.
+- Missing READMEs are common and are NOT a reason to skip a repo. When a repo has no README, judge by its name, language, topics, and root file listing instead (e.g. "requirements.txt" or "manage.py" suggests Python/backend; "package.json" suggests JS/web). ALWAYS place the repo somewhere — never skip it.
+- A repo that is genuinely unlike the others should get its own folder with just that one repo in it — that is perfectly fine. The goal is that ALL ${repos.length} repos are placed, not that every folder has multiple repos.
+- If you are unsure about a repo, place it in the MOST LIKELY folder based on whatever signal you have. An imperfect placement is always better than omitting a repo.
 - Base your judgment on the actual content (README, root files), not just the repo name.
 - Respond with ONLY a JSON object, no other text, no markdown code fences, matching exactly this shape:
 {"folders": [{"name": "Folder Name", "repoIndexes": [0, 2, 5]}]}`;
@@ -126,12 +131,7 @@ Rules:
         { role: "user", content: repoBlocks },
       ],
       temperature: 0.2,
-      // gpt-oss models spend part of their token budget on internal
-      // reasoning before writing the final answer. "low" keeps that
-      // overhead small and predictable; max_tokens needs enough headroom
-      // for both the reasoning and the JSON output, or generation can come
-      // back empty (seen in testing at max_tokens: 1024).
-      reasoning_effort: "low",
+      reasoning_effort: "medium",
       include_reasoning: false,
       max_tokens: 2048,
       response_format: { type: "json_object" },
@@ -161,13 +161,78 @@ Rules:
     throw new Error("AI response didn't match the expected format");
   }
 
-  // Defensive cleanup regardless of prompt compliance: strip any stray
-  // trailing number/index the model appended to a folder name (seen in
-  // testing even after the prompt explicitly forbade it).
+  // Defensive cleanup: strip any stray trailing number/index the model
+  // appended to a folder name.
   parsed.folders = parsed.folders.map((f) => ({
     ...f,
     name: f.name.replace(/\s*[-–—:]?\s*#?\d+\s*$/, "").trim() || f.name,
   }));
+
+  // Second pass: if the model missed any repos, try once more with just
+  // the missed repos, telling the model which folders already exist so it
+  // slots them in rather than inventing new ones.
+  const assignedIndexes = new Set(parsed.folders.flatMap((f) => f.repoIndexes));
+  const missedRepos = repos.filter((r) => !assignedIndexes.has(r.index));
+
+  if (missedRepos.length > 0 && missedRepos.length < repos.length) {
+    const assignedFolderNames = parsed.folders.map((f) => f.name);
+    const allKnownFolders = [...new Set([...existingFolderNames, ...assignedFolderNames])];
+
+    const retryPrompt = `You are a code repository organizer. You have already organized most of a user's repos into these folders: ${allKnownFolders.join(", ")}.
+
+The following ${missedRepos.length} repos were accidentally left out. Place EVERY SINGLE ONE into the most fitting folder from the list above. If none fit well, you may create ONE new folder.
+
+CRITICAL: You MUST place ALL ${missedRepos.length} repos. Every index listed below must appear exactly once in your output.
+
+Respond with ONLY a JSON object:
+{"folders": [{"name": "Folder Name", "repoIndexes": [3, 7]}]}`;
+
+    try {
+      const retryRes = await fetchWithRetry(
+        {
+          model: GROQ_MODEL,
+          messages: [
+            { role: "system", content: retryPrompt },
+            { role: "user", content: buildRepoBlocks(missedRepos) },
+          ],
+          temperature: 0.1,
+          reasoning_effort: "medium",
+          include_reasoning: false,
+          max_tokens: 1024,
+          response_format: { type: "json_object" },
+        },
+        GROQ_API_KEY
+      );
+
+      if (retryRes.ok) {
+        const retryData = (await retryRes.json()) as { choices?: { message?: { content?: string } }[] };
+        const retryContent = retryData.choices?.[0]?.message?.content;
+        if (retryContent) {
+          const retryCleaned = retryContent.trim().replace(/^```(json)?/i, "").replace(/```$/, "").trim();
+          const retryParsed = JSON.parse(retryCleaned) as AiCategorizeResult;
+          if (retryParsed && Array.isArray(retryParsed.folders)) {
+            for (const retryFolder of retryParsed.folders) {
+              const existing = parsed.folders.find(
+                (f) => f.name.toLowerCase() === retryFolder.name.toLowerCase()
+              );
+              if (existing) {
+                existing.repoIndexes.push(...retryFolder.repoIndexes);
+              } else {
+                parsed.folders.push({
+                  name: retryFolder.name.replace(/\s*[-–—:]?\s*#?\d+\s*$/, "").trim() || retryFolder.name,
+                  repoIndexes: retryFolder.repoIndexes,
+                });
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // If the retry fails, we still have the original results — the
+      // missed repos will show up as "unassigned" in the frontend, which
+      // is better than crashing the whole request.
+    }
+  }
 
   return parsed;
 }
