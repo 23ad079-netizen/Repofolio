@@ -23,7 +23,7 @@ app.use("/api/folders", folderRoutes);
 app.use("/api/repositories", repositoryRoutes);
 app.use("/api/sync", syncRoutes);
 app.use("/api/settings", settingsRoutes);
-app.use("/portfolio", portfolioRoutes); // public, unauthenticated
+app.use("/api/portfolio", portfolioRoutes); // public, unauthenticated
 app.use("/api/categorize", categorizeRoutes);
 app.use("/api/health", healthRoutes);
 app.use("/api/ai-categorize", aiCategorizeRoutes);

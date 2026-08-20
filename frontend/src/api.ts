@@ -1,4 +1,6 @@
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+// In production, force a relative path ("") so requests go to Vercel (which proxies to Render).
+// In development, we use VITE_API_URL or default to local backend port 4000.
+const API_URL = import.meta.env.PROD ? "" : (import.meta.env.VITE_API_URL || "http://localhost:4000");
 
 export interface Folder {
   id: string;
@@ -64,7 +66,7 @@ export const api = {
     user: { username: string; avatarUrl: string | null };
     folders: Folder[];
     repositories: (Pick<Repository, "id" | "name" | "description" | "htmlUrl" | "language" | "stars" | "folderId">)[];
-  }> => request(`/portfolio/${slug}`),
+  }> => request(`/api/portfolio/${slug}`),
 
   // Auto-categorization
   suggestions: (): Promise<
